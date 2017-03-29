@@ -42,8 +42,36 @@ describe('Authorization scopes', () => {
       .expect(401);
   });
 
+  describe('token granted both default and custom scope', () => {
+    beforeEach('given token with default and custom scope',
+      () => givenScopedToken(['DEFAULT', CUSTOM_SCOPE]));
+    beforeEach(logAllServerErrors);
+
+    it('allows invocation of default-scoped method', () => {
+      return request.get('/users/' + testUser.id)
+        .set('Authorization', scopedToken.id)
+        .expect(200);
+    });
+
+    it('allows invocation of custom-scoped method', () => {
+      return request.get('/users/scoped')
+        .set('Authorization', scopedToken.id)
+        .expect(204);
+    });
+  });
+
+  it('allows invocation when at least one method scope is matched', () => {
+    givenRemoteMethodWithCustomScope(['read', 'write']);
+    givenScopedToken(['read', 'execute']).then(() => {
+      return request.get('/users/scoped')
+        .set('Authorization', scopedToken.id)
+        .expect(204);
+    });
+  });
+
   function givenAppAndRequest() {
     app = loopback({localRegistry: true, loadBuiltinModels: true});
+    app.set('remoting', {rest: {handleErrors: false}});
     app.dataSource('db', {connector: 'memory'});
     app.enableAuth({dataSource: 'db'});
     request = supertest(app);
@@ -54,9 +82,10 @@ describe('Authorization scopes', () => {
   }
 
   function givenRemoteMethodWithCustomScope() {
+    const accessScopes = arguments[0] || [CUSTOM_SCOPE];
     User.scoped = function(cb) { cb(); };
     User.remoteMethod('scoped', {
-      accessScope: CUSTOM_SCOPE,
+      accessScopes,
       http: {verb: 'GET', path: '/scoped'},
     });
     User.settings.acls.push({
@@ -79,7 +108,8 @@ describe('Authorization scopes', () => {
   }
 
   function givenScopedToken() {
-    return testUser.accessTokens.create({ttl: 60, scopes: [CUSTOM_SCOPE]})
+    const scopes = arguments[0] || [CUSTOM_SCOPE];
+    return testUser.accessTokens.create({ttl: 60, scopes})
       .then(t => scopedToken = t);
   }
 
@@ -93,7 +123,8 @@ describe('Authorization scopes', () => {
         console.log('Unhandled error for request %s %s:',
           req.method, req.url, err.stack || err);
       }
-      next(err);
+      res.statusCode = err.statusCode || 500;
+      res.json(err);
     });
   }
 });
